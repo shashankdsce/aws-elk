@@ -1,0 +1,146 @@
+Description: >
+
+    This template deploys a VPC, with a pair of public and private subnets spread 
+    across two Availabilty Zones. It deploys an Internet Gateway, with a default 
+    route on the public subnets. It deploys a pair of NAT Gateways (one in each AZ), 
+    and default routes for them in the private subnets.
+
+    It then deploys a highly available ECS cluster using an AutoScaling Group, with 
+    ECS hosts distributed across multiple Availability Zones. 
+
+    Finally, it deploys a pair of example ECS services from containers published in 
+    Amazon EC2 Container Registry (Amazon ECR).
+
+    Last Modified: 22nd September 2016
+    Author: Paul Maddox <pmaddox@amazon.com>
+Parameters:
+
+    VPCID:
+        Description: Please enter the IP range (CIDR notation) for this VPC
+        Type: String
+        Default: 10.192.0.0/16
+
+    SubnetPublicA:
+        Description: Please enter the IP range (CIDR notation) for the public subnet in the first Availability Zone
+        Type: String
+        Default: 10.192.10.0/24
+
+    SubnetPublicB:
+        Description: Please enter the IP range (CIDR notation) for the public subnet in the second Availability Zone
+        Type: String
+        Default: 10.192.11.0/24
+
+
+    EC2KeyName:
+        Description: The name of the EC2 key pair
+        Type: String
+
+    HttpProxy:
+        Description: The Application Load Balancer listener to register with
+        Type: String
+
+    HttpsProxy:
+        Description: The Application Load Balancer listener to register with
+        Type: String
+
+    NoProxy:
+        Description: The Application Load Balancer listener to register with
+        Type: String
+
+    GitHubUser:
+        Type: String
+        Description: Your username on GitHub.
+
+    GitHubRepo:
+        Type: String
+        Default: ecs-demo-php-simple-app
+        Description: The repo name of the sample service.
+
+    GitHubBranch:
+        Type: String
+        Default: master
+        Description: The branch of the repo to continuously deploy.
+
+    GitHubToken:
+        Type: String
+        Description: >
+            Token for the user specified above. (https://github.com/settings/tokens)
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterLabels:
+      GitHubUser:
+        default: "User"
+      GitHubRepo:
+        default: "Repo"
+      GitHubBranch:
+        default: "Branch"
+      GitHubToken:
+        default: "Personal Access Token"
+    ParameterGroups:
+      - Label:
+          default: GitHub Configuration
+        Parameters:
+          - GitHubRepo
+          - GitHubBranch
+          - GitHubUser
+          - GitHubToken
+
+Resources:
+
+    SecurityGroups:
+        Type: AWS::CloudFormation::Stack
+        Properties:
+            TemplateURL: https://s3-ap-southeast-2.amazonaws.com/build-devisland-artifact-continuous-deployment-ap-southeast-2/infrastructure/security-groups.yaml
+            Parameters: 
+                EnvironmentName: !Ref AWS::StackName
+                VPC: !Ref VPCID
+
+    ALB:
+        Type: AWS::CloudFormation::Stack
+        Properties:
+            TemplateURL: https://s3-ap-southeast-2.amazonaws.com/build-devisland-artifact-continuous-deployment-ap-southeast-2/infrastructure/load-balancers.yaml
+            Parameters:
+                EnvironmentName: !Ref AWS::StackName
+                VPC: !Ref VPCID
+                SubnetPublicA: !Ref SubnetPublicA
+                SubnetPublicB: !Ref SubnetPublicB
+                SecurityGroup: !GetAtt SecurityGroups.Outputs.LoadBalancerSecurityGroup
+
+    ECS:
+        Type: AWS::CloudFormation::Stack
+        Properties:
+            TemplateURL: https://s3-ap-southeast-2.amazonaws.com/build-devisland-artifact-continuous-deployment-ap-southeast-2/infrastructure/ecs-cluster.yaml
+            Parameters:
+                EnvironmentName: !Ref AWS::StackName
+                InstanceType: t2.small
+                ClusterSize: 1
+                VPC: !Ref VPCID
+                SecurityGroup: !GetAtt SecurityGroups.Outputs.ECSHostSecurityGroup
+                SubnetPublicA: !Ref SubnetPublicA
+                SubnetPublicB: !Ref SubnetPublicB
+                EC2KeyName: !Ref EC2KeyName
+
+
+    ProductService:
+            Type: AWS::CloudFormation::Stack
+            Properties:
+                TemplateURL: https://s3-ap-southeast-2.amazonaws.com/build-devisland-artifact-files/api/services/product-service/service.yaml
+                Parameters:
+                    VPC: !Ref VPCID
+                    Cluster: !GetAtt ECS.Outputs.Cluster
+                    DesiredCount: 2
+                    Listener: !GetAtt ALB.Outputs.Listener
+                    Path: /products
+
+
+
+Outputs:
+
+    ProductServiceUrl: 
+        Description: The URL endpoint for the product service
+        Value: !Join [ "/", [ !GetAtt ALB.Outputs.LoadBalancerUrl, "cxf" ]]
+
+    WebsiteServiceUrl: 
+        Description: The URL endpoint for the website service
+        Value: !Join ["", [ !GetAtt ALB.Outputs.LoadBalancerUrl, "/" ]]
