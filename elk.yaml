@@ -5,6 +5,12 @@ Parameters:
   Stack:
     Description: Stack applied as a tag
     Type: String
+  Account:
+    Description: AWS Account for this account
+    Type: String
+  Organisation:
+    Description: Organisation for this account
+    Type: String
   KeyName:
     Default: bootstrap
     Description: Name of an existing EC2 KeyPair for SSH access
@@ -45,14 +51,64 @@ Parameters:
     AllowedValues:
       - 'true'
       - 'false'
-
   ElkCapacity:
     Description: Autoscale Size
     Type: Number
     Default: '1'
     MinValue: 1
     MaxValue: 12
+  LogstashCapacity:
+    Description: Autoscale Size
+    Type: Number
+    Default: '1'
+    MinValue: 1
+    MaxValue: 12
   InstanceType:
+    Description: EC2 instance type for the Elasticsearch nodes
+    Type: String
+    Default: t2.medium
+    AllowedValues:
+      - t2.micro
+      - t2.small
+      - t2.medium
+      - t2.large
+      - m4.large
+      - m4.xlarge
+      - m4.2xlarge
+      - m4.4xlarge
+      - m4.10clarge
+      - m3.medium
+      - m3.large
+      - m3.xlarge
+      - m3.2xlarge
+      - c3.large
+      - c3.xlarge
+      - c3.2xlarge
+      - c3.4xlarge
+      - c3.8xlarge
+      - c4.large
+      - c4.xlarge
+      - c4.2xlarge
+      - c4.4xlarge
+      - c4.8xlarge
+      - r3.large
+      - r3.xlarge
+      - r3.2xlarge
+      - r3.4xlarge
+      - r3.8xlarge
+      - i2.xlarge
+      - i2.2xlarge
+      - i2.4xlarge
+      - i2.8xlarge
+      - d2.xlarge
+      - d2.2xlarge
+      - d2.4xlarge
+      - d2.8xlarge
+      - hi1.4xlarge
+      - hs1.8xlarge
+      - cr1.8xlarge
+      - cc2.8xlarge
+  LogstashInstanceType:
     Description: EC2 instance type for the Elasticsearch nodes
     Type: String
     Default: t2.medium
@@ -130,6 +186,13 @@ Parameters:
     Default: 0
     MaxValue: 1000
     MinValue: 0
+  LogstashEBSVolumeSize:
+    Description: EBS storage to be attached to each instance (in GB). Set to zero
+      for no attached EBS volume (the on-instance storage will be used instead).
+    Type: Number
+    Default: 0
+    MaxValue: 1000
+    MinValue: 0
   SnapshotRepository:
     Description: S3 bucket name for elasticsearch snapshots repository
     Type: String
@@ -145,6 +208,7 @@ Parameters:
 Conditions:
   HasDNS: !Not [!Equals [!Ref HostedZoneName,  '']]
   UseEBS: !Not [!Equals [!Ref EBSVolumeSize,  '0']]
+  UseLogstashEBS: !Not [!Equals [!Ref LogstashEBSVolumeSize,  '0']]
   HasS3: !Not [!Equals [!Ref SnapshotRepository,  '']]
   HasSSLCertificate: !Not [!Equals [!Ref PublicLoadBalancerSSLCertificateARN,  '']]
   CreateCWLForStack: !Equals
@@ -421,8 +485,11 @@ Resources:
       - Protocol: TCP
         LoadBalancerPort: '80'
         InstancePort: '8080'
+      - Protocol: TCP
+        LoadBalancerPort: '9200'
+        InstancePort: '9200'
       HealthCheck:
-        Target: TCP:5601
+        Target: HTTP:8080/app/kibana
         Timeout: '10'
         Interval: '20'
         UnhealthyThreshold: '10'
@@ -430,6 +497,25 @@ Resources:
       Subnets: !Ref PrivateVpcSubnets
       SecurityGroups:
       - !Ref ElkInternalLoadBalancerSecurityGroup
+  LogstashInternalLoadBalancer:
+    Type: AWS::ElasticLoadBalancing::LoadBalancer
+    Properties:
+      Scheme: internal
+      CrossZone: true
+      Listeners:
+      - Protocol: TCP
+        LoadBalancerPort: '5000'
+        InstancePort: '5000'
+      HealthCheck:
+        Target: TCP:5000
+        Timeout: '10'
+        Interval: '20'
+        UnhealthyThreshold: '10'
+        HealthyThreshold: '2'
+      Subnets: !Ref PrivateVpcSubnets
+      SecurityGroups:
+      - !Ref LogstashInternalLoadBalancerSecurityGroup
+
   ElkAutoscalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
@@ -458,7 +544,222 @@ Resources:
       - Key: Name
         Value: kibana
         PropagateAtLaunch: 'true'
+  LogstashAutoscalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier: !Ref PrivateVpcSubnets
+      LaunchConfigurationName: !Ref LogstashLaunchConfig
+      MinSize: '1'
+      MaxSize: '12'
+      DesiredCapacity: !Ref LogstashCapacity
+      HealthCheckType: EC2
+      HealthCheckGracePeriod: 600
+      LoadBalancerNames:
+      - !Ref LogstashInternalLoadBalancer
+      Tags:
+      - Key: Stack
+        Value:
+          !Ref Stack
+        PropagateAtLaunch: 'true'
+      - Key: App
+        Value: Logstash
+        PropagateAtLaunch: 'true'
+      - Key: Name
+        Value: Logstash
+        PropagateAtLaunch: 'true'
   ElkLaunchConfig:
+      Type: AWS::AutoScaling::LaunchConfiguration
+      Properties:
+        ImageId: !FindInMap
+          - AWSRegionArch2AMI
+          - !Ref 'AWS::Region'
+          - !FindInMap
+            - AWSInstanceType2Arch
+            - !Ref InstanceType
+            - Arch
+        SecurityGroups:
+        - !Ref ElkSecurityGroup
+        InstanceType: !Ref InstanceType
+        BlockDeviceMappings:
+        - Fn::If:
+          - UseEBS
+          - DeviceName: "/dev/sdk"
+            Ebs:
+              VolumeSize: !Ref EBSVolumeSize
+              VolumeType: gp2
+          - !Ref AWS::NoValue
+        IamInstanceProfile: !Ref InstanceProfile
+        KeyName: !Ref KeyName
+        UserData:
+          Fn::Base64: !Sub
+          - |
+            #!/bin/bash -ev
+            cat >/etc/profile.d/proxy.sh <<EOL
+            export http_proxy=http://${ProxyServerEndpoint}:${ProxyPort};
+            export https_proxy=http://${ProxyServerEndpoint}:${ProxyPort};
+            export no_proxy=${ProxyExcludeList};
+            EOL
+
+            chmod 644 /etc/profile.d/proxy.sh
+            source /etc/profile.d/proxy.sh
+
+            yum update -y aws-cfn-bootstrap
+            yum update -y aws-cli
+            yum install -y java-1.8.0
+            yum remove -y java-1.7.0-openjdk
+
+            # Update repositories
+            rpm --import https://packages.elastic.co/GPG-KEY-elasticsearch
+            cat >/etc/yum.repos.d/elastic.repo <<EOL
+            [elastic-5.x]
+            name=Elastic repository for 5.x packages
+            baseurl=https://artifacts.elastic.co/packages/5.x/yum
+            gpgcheck=1
+            gpgkey=https://artifacts.elastic.co/GPG-KEY-elasticsearch
+            enabled=1
+            autorefresh=1
+            type=rpm-md
+            EOL
+
+
+            # Install prerequesites
+            yum -y update && yum -y install  ntp unzip libwww-perl libdatetime-perl
+
+            # Install Logstash, Elasticsearch, Kibana, etc...
+            yum -y update && yum -y install elasticsearch kibana nginx  elasticsearch-curator nodejs npm
+
+            # Configure system
+            cat >/etc/security/limits.conf << EOF
+            elasticsearch - nofile  65536
+            elasticsearch - memlock unlimited
+            EOF
+
+            # Mount Volume
+            ${MountVolume}
+            chown -R elasticsearch:  /opt/elasticsearch
+
+            # Setup free disk space monitoring
+            curl http://aws-cloudwatch.s3.amazonaws.com/downloads/CloudWatchMonitoringScripts-1.2.1.zip -O
+            unzip CloudWatchMonitoringScripts-1.2.1.zip -d /usr/local/bin
+            rm CloudWatchMonitoringScripts-1.2.1.zip
+            echo '*/30 * * * * root /usr/local/bin/aws-scripts-mon/mon-put-instance-data.pl --disk-space-util --disk-path=/opt/elasticsearch --from-cron' >/etc/cron.d/monitor-instance
+
+            # Install ES plugins
+            export ES_JAVA_OPTS="-DproxyHost=${ProxyServerEndpoint} -DproxyPort=${ProxyPort}"
+
+            /usr/share/elasticsearch/bin/elasticsearch-plugin  install x-pack --batch
+            /usr/share/elasticsearch/bin/elasticsearch-plugin  install discovery-ec2 --batch
+            /usr/share/elasticsearch/bin/elasticsearch-plugin   install repository-s3 --batch
+            #/usr/share/elasticsearch/bin/elasticsearch-plugin  install lmenezes/elasticsearch-kopf/v2.1.1 --batch
+
+            # Configure Elasticsearch
+            echo 'ES_JAVA_OPTS="-DproxyHost=${ProxyServerEndpoint} -DproxyPort=${ProxyPort} -Xms${ESHeapSize} -Xmx${ESHeapSize}"' >>/etc/default/elasticsearch
+            wget -O /etc/elasticsearch/elasticsearch.yml https://raw.githubusercontent.com/guardian/elk-stack/master/config/elasticsearch.yml
+            sed -i \
+              -e 's,@@REGION,${AWS::Region},g' \
+              -e 's,@@STACK,${Stack},g' \
+              -e 's,@@HOST,${ElkHost},g' \
+              -e 's,path.data: /data,path.data: /opt/elasticsearch,g' \
+              /etc/elasticsearch/elasticsearch.yml
+
+            # Install Kibana plugins
+            wget -O /tmp/x-pack-5.5.0.zip https://artifacts.elastic.co/downloads/kibana-plugins/x-pack/x-pack-5.5.0.zip
+            /usr/share/kibana/bin/kibana-plugin install file:///tmp/x-pack-5.5.0.zip -d /usr/share/kibana/plugins
+
+            # Configure Kibana
+            cat >/etc/kibana/kibana.yml << EOF
+            xpack.security.enabled: false
+            server.port: 8080
+            server.host: 0.0.0.0
+            EOF
+
+            chown -R kibana: /usr/share/kibana
+
+            #Install Cerebro for system status
+            wget -O /tmp/cerebro-0.6.5.zip https://github.com/lmenezes/cerebro/releases/download/v0.6.5/cerebro-0.6.5.zip
+            unzip /tmp/cerebro-0.6.5.zip -d /usr/share/
+            ln -s /usr/share/cerebro-0.6.5/bin/cerebro /usr/bin/cerebro
+            cerebro &
+
+            aws s3 cp s3://{Organisation}-{Account}-elk/nginx/nginx.conf /etc/nginx/nginx.conf
+
+
+            # Start services
+
+            wget -O /etc/systemd/system/kibana.service https://raw.githubusercontent.com/guardian/elk-stack/master/config/systemd-kibana.service
+            sudo chkconfig elasticsearch --add
+            sudo chkconfig elasticsearch on
+
+            sudo chkconfig kibana --add
+            sudo chkconfig kibana on
+
+
+            service  elasticsearch start
+            service  kibana start
+
+
+
+            while ! nc -z localhost 9200; do sleep 5; done; echo Elasticsearch is up!
+            #Install Dummy Dashboard
+            yum install -y metricbeat
+            /usr/share/metricbeat/scripts/import_dashboards -es http://127.0.0.1:9200
+            yum install -y packetbeat
+            /usr/share/packetbeat/scripts/import_dashboards -es http://127.0.0.1:9200
+            #yum install -y heartbeat
+            #/usr/share/heartbeat/scripts/import_dashboards -es http://127.0.0.1:9200
+            yum install -y filebeat
+            /usr/share/filebeat/scripts/import_dashboards -es http://127.0.0.1:9200
+
+
+
+            # Setup S3 snapshot
+            ${SetupS3Snapshot}
+            # Setup schedule to delete old indexes
+            mkdir /etc/curator
+            wget -O /etc/curator/curator.yml https://raw.githubusercontent.com/guardian/elk-stack/master/config/curator/curator.yml
+
+            wget -O /etc/curator/delete-old-indexes.yml https://raw.githubusercontent.com/guardian/elk-stack/master/config/curator/delete-old-indexes.yml
+            sed -i \
+              -e 's,@@NUMBER_OF_DAYS,${IndexKeepDays},g' \
+              /etc/curator/delete-old-indexes.yml
+            echo '30 0 * * * root /usr/bin/curator --config /etc/curator/curator.yml /etc/curator/delete-old-indexes.yml' >/etc/cron.d/curator
+          - ESHeapSize: 2g
+            MountVolume: !If
+              - UseEBS
+              - !Sub |
+                  mkfs.ext4 /dev/xvdk
+                  mkdir /opt/elasticsearch
+                  mount /dev/xvdk /opt/elasticsearch
+                  echo '/dev/xvdk /opt/elasticsearch ext4 defaults 0 2' > /etc/fstab
+              - !Sub |
+                  mkdir -p /opt/elasticsearch
+                  #mount /dev/xvda1 /data
+            ElkHost: !Join
+              - ''
+              - - !If [HasSSLCertificate, 'https://', 'http://']
+                - !If [HasDNS, !Sub 'kibana.${HostedZoneName}', !GetAtt ElkPublicLoadBalancer.DNSName]
+            SetupS3Snapshot: !If
+              - HasS3
+              - !Sub |
+                  while ! nc -z localhost 9200; do sleep 5; done; echo Elasticsearch is up!
+                  cat >/tmp/s3_connector.json << EOF
+                      {
+                             "type": "s3",
+                              "settings": {
+                              "bucket": "devisland-elk-backup",
+                              "region": "ap-southeast-2"
+                            }
+                         }
+                  EOF
+                  curl -XPUT 'http://localhost:9200/_snapshot/s3' -d @/tmp/s3_connector.json
+
+                  curl 'http://localhost:9200/_snapshot/s3?pretty'
+                  wget -O /usr/local/bin/backup.sh https://raw.githubusercontent.com/guardian/elk-stack/master/scripts/backup.sh
+                  chmod +x /usr/local/bin/backup.sh
+                  echo '15 0 * * * root /usr/local/bin/backup.sh' >/etc/cron.d/backup
+              - ''
+
+  LogstashLaunchConfig:
     Type: AWS::AutoScaling::LaunchConfiguration
     Properties:
       ImageId: !FindInMap
@@ -466,17 +767,17 @@ Resources:
         - !Ref 'AWS::Region'
         - !FindInMap
           - AWSInstanceType2Arch
-          - !Ref InstanceType
+          - !Ref LogstashInstanceType
           - Arch
       SecurityGroups:
-      - !Ref ElkSecurityGroup
-      InstanceType: !Ref InstanceType
+      - !Ref LogstashSecurityGroup
+      InstanceType: !Ref LogstashInstanceType
       BlockDeviceMappings:
       - Fn::If:
-        - UseEBS
+        - UseLogstashEBS
         - DeviceName: "/dev/sdk"
           Ebs:
-            VolumeSize: !Ref EBSVolumeSize
+            VolumeSize: !Ref LogstashEBSVolumeSize
             VolumeType: gp2
         - !Ref AWS::NoValue
       IamInstanceProfile: !Ref InstanceProfile
@@ -489,6 +790,13 @@ Resources:
           export http_proxy=http://${ProxyServerEndpoint}:${ProxyPort};
           export https_proxy=http://${ProxyServerEndpoint}:${ProxyPort};
           export no_proxy=${ProxyExcludeList};
+          export AWS_ORG=${Organisation}
+          export AWS_ACCOUNT_NAME=${Account}
+          export AWS_ACCOUNT_ID=${AWS::AccountId}
+          export AWS_STACK_NAME=${AWS::StackName}
+          export AWS_STACK_ID=${AWS::StackId}
+          export AWS_REGION=${AWS::Region}
+          export AWS_VPC_ID=${VpcId}
           EOL
 
           chmod 644 /etc/profile.d/proxy.sh
@@ -497,10 +805,11 @@ Resources:
           yum update -y aws-cfn-bootstrap
           yum update -y aws-cli
           yum install -y java-1.8.0
-          yum remove java-1.7.0-openjdk
+          yum remove -y java-1.7.0-openjdk
 
           # Update repositories
-          rpm --import https://packages.elastic.co/GPG-KEY-elasticsearch
+          rpm --import https://artifacts.elastic.co/GPG-KEY-elasticsearch
+
           cat >/etc/yum.repos.d/elastic.repo <<EOL
           [elastic-5.x]
           name=Elastic repository for 5.x packages
@@ -516,127 +825,181 @@ Resources:
           # Install prerequesites
           yum -y update && yum -y install  ntp unzip libwww-perl libdatetime-perl
 
-          # Install Logstash, Elasticsearch, Kibana, etc...
-          yum -y update && yum -y install elasticsearch kibana  elasticsearch-curator nodejs npm
-
-          # Configure system
-          cat >/etc/security/limits.conf << EOF
-          elasticsearch - nofile  65536
-          elasticsearch - memlock unlimited
-          EOF
+          # Install Logstash
+          yum -y update && yum -y install logstash
 
           # Mount Volume
           ${MountVolume}
-          chown -R elasticsearch:  /opt/elasticsearch
+          chown -R logstash: /opt/logstash
 
           # Setup free disk space monitoring
           curl http://aws-cloudwatch.s3.amazonaws.com/downloads/CloudWatchMonitoringScripts-1.2.1.zip -O
           unzip CloudWatchMonitoringScripts-1.2.1.zip -d /usr/local/bin
           rm CloudWatchMonitoringScripts-1.2.1.zip
-          echo '*/30 * * * * root /usr/local/bin/aws-scripts-mon/mon-put-instance-data.pl --disk-space-util --disk-path=/opt/elasticsearch --from-cron' >/etc/cron.d/monitor-instance
+          echo '*/30 * * * * root /usr/local/bin/aws-scripts-mon/mon-put-instance-data.pl --disk-space-util --disk-path=/opt/logstash --from-cron' >/etc/cron.d/monitor-instance
 
           # Install ES plugins
-          export ES_JAVA_OPTS="$ES_JAVA_OPTS -DproxyHost=${ProxyServerEndpoint} -DproxyPort=${ProxyPort}"
-          /usr/share/elasticsearch/bin/elasticsearch-plugin  -DproxyHost=${ProxyServerEndpoint} -DproxyPort=${ProxyPort} install x-pack --batch
-          /usr/share/elasticsearch/bin/elasticsearch-plugin -DproxyHost=${ProxyServerEndpoint} -DproxyPort=${ProxyPort}  install discovery-ec2 --batch
-          /usr/share/elasticsearch/bin/elasticsearch-plugin -DproxyHost=${ProxyServerEndpoint} -DproxyPort=${ProxyPort}  install repository-s3 --batch
-          /usr/share/elasticsearch/bin/elasticsearch-plugin -DproxyHost=${ProxyServerEndpoint} -DproxyPort=${ProxyPort}  install lmenezes/elasticsearch-kopf/v2.1.1 --batch
+          export LS_JVM_OPTS="-DproxyHost=${ProxyServerEndpoint} -DproxyPort=${ProxyPort}"
 
-          # Configure Elasticsearch
-          echo 'ES_JAVA_OPTS="-Xms${ESHeapSize} -Xmx${ESHeapSize}"' >>/etc/default/elasticsearch
-          wget -O /etc/elasticsearch/elasticsearch.yml https://raw.githubusercontent.com/guardian/elk-stack/master/config/elasticsearch.yml
-          sed -i \
-            -e 's,@@REGION,${AWS::Region},g' \
-            -e 's,@@STACK,${Stack},g' \
-            -e 's,@@HOST,${ElkHost},g' \
-            -e 's,path.data: /data,path.data: /opt/elasticsearch,g' \
-            /etc/elasticsearch/elasticsearch.yml
-
-          # Install Kibana plugins
-          wget -O /tmp/x-pack-5.5.0.zip https://artifacts.elastic.co/downloads/kibana-plugins/x-pack/x-pack-5.5.0.zip
-          /usr/share/kibana/bin/kibana-plugin install file:///tmp/x-pack-5.5.0.zip -d /usr/share/kibana/plugins
-
-          # Configure Kibana
-          cat >/etc/kibana/kibana.yml << EOF
-          xpack.security.enabled: false
-          server.port: 8080
-          server.host: 0.0.0.0
+          cat <<EOF > /etc/logstash/conf.d/00_syslog.conf
+          input {
+            tcp {
+              port => 5544
+              type => syslog
+            }
+            udp {
+              port => 5544
+              type => syslog
+            }
+            beat {
+              port => 5000
+            }
+          }
+          filter {
+            # Check if syslog message has PRI using grep.
+            #
+            # If so then : strip the syslog PRI part and create facility and severity
+            # fields. The original syslog message is saved in field %{syslog_raw_message}.
+            # The extracted PRI is available in the %{syslog_pri} field.
+            #
+            # You get %{syslog_facility_code} and %{syslog_severity_code} fields.
+            # You also get %{syslog_facility} and %{syslog_severity} fields if the
+            # use_labels option is set True (the default) on syslog_pri filter.
+            grep {
+              type => "syslog"
+              match => ["@message","<\d+>"]
+              add_tag => "has_pri"
+              drop => false
+            }
+            grok {
+              type => "syslog"
+              tags => [ "has_pri" ]
+              pattern => [ "<%{POSINT:syslog_pri}>%{SPACE}%{GREEDYDATA:message_remainder}" ]
+              add_tag => "got_syslog_pri"
+              add_field => [ "syslog_raw_message", "%{@message}" ]
+            }
+            syslog_pri {
+              type => "syslog"
+              tags => [ "got_syslog_pri" ]
+              add_tag => "%{syslog_severity}"
+            }
+            mutate {
+              type => "syslog"
+              tags => [ "got_syslog_pri" ]
+              replace => [ "@message", "%{message_remainder}" ]
+            }
+            mutate {
+              # Message_remainder no longer needed.
+              type => "syslog"
+              tags => [ "got_syslog_pri" ]
+              remove => [ "message_remainder" ]
+            }
+            # Strip the syslog timestamp and force event timestamp to be the same.
+            # The original string is saved in field %{syslog_timestamp}.
+            # The original logstash input timestamp is saved in field %{received_at}.
+            grok {
+              type => "syslog"
+              pattern => [ "%{SYSLOGTIMESTAMP:syslog_timestamp}%{SPACE}%{GREEDYDATA:message_remainder}" ]
+              add_tag => "got_syslog_timestamp"
+              add_field => [ "received_at", "%{@timestamp}" ]
+            }
+            mutate {
+              type => "syslog"
+              tags => [ "got_syslog_timestamp" ]
+              replace => [ "@message", "%{message_remainder}" ]
+            }
+            mutate {
+              # Message_remainder no longer needed.
+              type => "syslog"
+              tags => [ "got_syslog_timestamp" ]
+              remove => [ "message_remainder" ]
+            }
+            date {
+              type => "syslog"
+              tags => [ "got_syslog_timestamp" ]
+              match => [ "syslog_timestamp", "MMM  d HH:mm:ss", "MMM dd HH:mm:ss", "ISO8601" ]
+            }
+            # Strip the host field from the syslog line.
+            # The extracted host field becomes the logstash %{@source_host} metadata
+            # and is also available in the filed %{syslog_hostname}.
+            # The original logstash source_host is saved in field %{logstash_source}.
+            grok {
+              type => "syslog"
+              pattern => [ "%{SYSLOGHOST:syslog_hostname}%{SPACE}%{GREEDYDATA:message_remainder}" ]
+              add_tag => "got_syslog_host"
+              add_field => [ "logstash_source", "%{@source_host}" ]
+            }
+            mutate {
+              type => "syslog"
+              tags => [ "got_syslog_host" ]
+              replace => [ "@source_host", "%{syslog_hostname}" ]
+              replace => [ "@message", "%{message_remainder}" ]
+            }
+            mutate {
+              # Message_remainder no longer needed.
+              type => "syslog"
+              tags => [ "got_syslog_host" ]
+              remove => [ "message_remainder" ]
+            }
+            # Strip the program and optional pid field from the syslog line
+            # available in the field %{syslog_program} and %{syslog_pid}.
+            grok {
+              type => "syslog"
+              pattern => [ "%{PROG:syslog_program}(?:\[%{POSINT:syslog_pid}\])?:%{SPACE}%{GREEDYDATA:message_remainder}" ]
+              add_tag => "got_syslog_program"
+            }
+            mutate {
+              type => "syslog"
+              tags => [ "got_syslog_program" ]
+              replace => [ "@message", "%{message_remainder}" ]
+            }
+            mutate {
+              # Message_remainder no longer needed.
+              type => "syslog"
+              tags => [ "got_syslog_program" ]
+              remove => [ "message_remainder" ]
+            }
+            ## Any extra processing you wish to do should be done here before
+            ## closing filter stanza and proceeding to output stanzas.
+            # Send events with the following tags per mail
+            grep {
+              type => "syslog"
+              match => [ "@tags", "warning|warn|error|err|critical|crit|alert|emergency|emerg|panic" ]
+              add_tag => [ "mail" ]
+              drop => false
+            }
+          }
           EOF
 
-          #Install Cerebro for system status
-          wgeet -O /tmp/cerebro-0.6.5.zip https://github.com/lmenezes/cerebro/releases/download/v0.6.5/cerebro-0.6.5.zip
-          unzip /tmp/cerebro-0.6.5.zip -d /usr/share/
-          ln -s /usr/share/cerebro-0.6.5/bin/cerebro /usr/bin/cerebro
-          cerebro &
+          cat <<EOF > /etc/logstash/conf.d/99_output.conf
+          output {
+            elasticsearch_http {
+              host => "${ElkHost}"
+              flush_size => 1
+            }
 
+          }
+          EOF
 
           # Start services
+          /usr/share/logstash/bin/system-install
+          initctl start logstash
 
-          wget -O /etc/systemd/system/kibana.service https://raw.githubusercontent.com/guardian/elk-stack/master/config/systemd-kibana.service
-          sudo chkconfig elasticsearch --add
-          sudo chkconfig elasticsearch on
-
-          sudo chkconfig kibana --add
-          sudo chkconfig kibana on
-
-
-          service  elasticsearch start
-          service  kibana start
-
-          #Install Dummy Dashboard
-          yum install -y metricbeat
-          /usr/share/metricbeat/scripts/import_dashboards -es http://127.0.0.1:9200
-          yum install -y packetbeat
-          /usr/share/packetbeat/scripts/import_dashboards -es http://127.0.0.1:9200
-          #yum install -y heartbeat
-          #/usr/share/heartbeat/scripts/import_dashboards -es http://127.0.0.1:9200
-          yum install -y filebeat
-          /usr/share/filebeat/scripts/import_dashboards -es http://127.0.0.1:9200
-
-
-
-          # Setup S3 snapshot
-          ${SetupS3Snapshot}
-          # Setup schedule to delete old indexes
-          mkdir /etc/curator
-          wget -O /etc/curator/curator.yml https://raw.githubusercontent.com/guardian/elk-stack/master/config/curator/curator.yml
-
-          wget -O /etc/curator/delete-old-indexes.yml https://raw.githubusercontent.com/guardian/elk-stack/master/config/curator/delete-old-indexes.yml
-          sed -i \
-            -e 's,@@NUMBER_OF_DAYS,${IndexKeepDays},g' \
-            /etc/curator/delete-old-indexes.yml
-          echo '30 0 * * * root /usr/bin/curator --config /etc/curator/curator.yml /etc/curator/delete-old-indexes.yml' >/etc/cron.d/curator
         - ESHeapSize: 2g
           MountVolume: !If
-            - UseEBS
+            - UseLogstashEBS
             - !Sub |
                 mkfs.ext4 /dev/xvdk
-                mkdir /opt/elasticsearch
-                mount /dev/xvdk /opt/elasticsearch
-                echo '/dev/xvdk /opt/elasticsearch ext4 defaults 0 2' > /etc/fstab
+                mkdir /opt/logstash
+                mount /dev/xvdk /opt/logstash
+                echo '/dev/xvdk /opt/logstash ext4 defaults 0 2' > /etc/fstab
             - !Sub |
-                mkdir -p /opt/elasticsearch
+                mkdir -p /opt/logstash
                 #mount /dev/xvda1 /data
           ElkHost: !Join
             - ''
             - - !If [HasSSLCertificate, 'https://', 'http://']
-              - !If [HasDNS, !Sub 'kibana.${HostedZoneName}', !GetAtt ElkPublicLoadBalancer.DNSName]
-          SetupS3Snapshot: !If
-            - HasS3
-            - !Sub |
-                while ! nc -z localhost 9200; do sleep 5; done; echo Elasticsearch is up!
-                curl -XPUT 'http://localhost:9200/_snapshot/s3' -d '{ \
-                  "type": "s3", \
-                  "settings": { \
-                    "bucket": "${ElkS3Bucket}", \
-                    "region": "${AWS::Region}", \
-                  } \
-                }'
-                curl 'http://localhost:9200/_snapshot/s3?pretty'
-                wget -O /usr/local/bin/backup.sh https://raw.githubusercontent.com/guardian/elk-stack/master/scripts/backup.sh
-                chmod +x /usr/local/bin/backup.sh
-                echo '15 0 * * * root /usr/local/bin/backup.sh' >/etc/cron.d/backup
-            - ''
+              - !If [HasDNS, !Sub 'kibana.${HostedZoneName}', !GetAtt ElkInternalLoadBalancer.DNSName]
 
   ElkPublicLoadBalancerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -658,8 +1021,8 @@ Resources:
         CidrIp: !Ref AllowedHttpCidr
       SecurityGroupEgress:
       - IpProtocol: tcp
-        FromPort: '8080'
-        ToPort: '8080'
+        FromPort: '80'
+        ToPort: '80'
         CidrIp: 0.0.0.0/0
   ElkInternalLoadBalancerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -671,30 +1034,71 @@ Resources:
         FromPort: '8080'
         ToPort: '8080'
         CidrIp: !Ref VpcIpRangeCidr
+      - IpProtocol: tcp
+        FromPort: '9200'
+        ToPort: '9200'
+        CidrIp: !Ref VpcIpRangeCidr
       SecurityGroupEgress:
       - IpProtocol: tcp
         FromPort: '0'
         ToPort: '65535'
         CidrIp: !Ref VpcIpRangeCidr
-
-  ElkSecurityGroup:
+  LogstashInternalLoadBalancerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Allow kibana from public and logstash from internal ELBs
       VpcId: !Ref VpcId
+      GroupDescription: Allow logstash messages from internal ELB
       SecurityGroupIngress:
       - IpProtocol: tcp
-        FromPort: '8080'
-        ToPort: '8080'
-        SourceSecurityGroupId: !Ref ElkInternalLoadBalancerSecurityGroup
-      - IpProtocol: tcp
-        FromPort: '8080'
-        ToPort: '8080'
-        SourceSecurityGroupId: !Ref ElkPublicLoadBalancerSecurityGroup
+        FromPort: '5000'
+        ToPort: '6000'
+        CidrIp: !Ref VpcIpRangeCidr
       - IpProtocol: tcp
         FromPort: '22'
         ToPort: '22'
         CidrIp: !Ref AllowedSshCidr
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: '5000'
+        ToPort: '5000'
+        CidrIp: !Ref VpcIpRangeCidr
+  ElkSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Allow kibana from public and logstash from internal ELBs
+        VpcId: !Ref VpcId
+        SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '8080'
+          ToPort: '8080'
+          SourceSecurityGroupId: !Ref ElkInternalLoadBalancerSecurityGroup
+        - IpProtocol: tcp
+          FromPort: '9200'
+          ToPort: '9400'
+          SourceSecurityGroupId: !Ref ElkInternalLoadBalancerSecurityGroup
+        - IpProtocol: tcp
+          FromPort: '8080'
+          ToPort: '8080'
+          SourceSecurityGroupId: !Ref ElkPublicLoadBalancerSecurityGroup
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: !Ref AllowedSshCidr
+  LogstashSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow TCP Flows from application servers to logstash
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: '5000'
+        ToPort: '5000'
+        SourceSecurityGroupId: !Ref LogstashInternalLoadBalancerSecurityGroup
+      - IpProtocol: tcp
+        FromPort: '22'
+        ToPort: '22'
+        CidrIp: !Ref AllowedSshCidr
+
   ElkSecurityGroupIngress:
     Type: AWS::EC2::SecurityGroupIngress
     Properties:
@@ -721,11 +1125,11 @@ Resources:
           HostedZoneId: !GetAtt ElkInternalLoadBalancer.CanonicalHostedZoneNameID
           DNSName: !GetAtt ElkInternalLoadBalancer.DNSName
 Outputs:
-  LogstashEndpoint:
+  ElasticEndpoint:
     Value: !Join
       - ''
       - - !GetAtt ElkInternalLoadBalancer.DNSName
-        - ':5601'
+        - ':9000'
     Description: Logging endpoint for Logstash TCP input
   KibanaURL:
     Value: !Join
