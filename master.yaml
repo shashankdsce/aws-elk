@@ -1,142 +1,381 @@
 Description: >
 
+    This Template deploys a ELK Stack, Elastic Search, Logstash, Kibana
+    for application logs view, application and system monitoring and alerting
 
-    This template deploys a highly available ECS cluster using an AutoScaling Group, with
-    ECS hosts distributed across multiple Availability Zones.
 
-    Finally, it deploys a pair of karaf ECS services from containers published in
-    Amazon EC2 Container Registry (Amazon ECR).
-
-    Last Modified: 27th June 2016
+    Last Modified: 13th June 2017
     Author: Shashank Verma <shashank.verma@optus.com.au>
 Parameters:
-
-    VPCID:
-        Description: Please enter the IP range (CIDR notation) for this VPC
+    Stack:
+        Description: Stack applied as a tag
         Type: String
-        Default: 10.192.0.0/16
-
-    SubnetPublicA:
-        Description: Please enter the IP range (CIDR notation) for the public subnet in the first Availability Zone
+    Account:
+        Description: AWS Account for this account
         Type: String
-        Default: 10.192.10.0/24
-
-    SubnetPublicB:
-        Description: Please enter the IP range (CIDR notation) for the public subnet in the second Availability Zone
+    Organisation:
+        Description: Organisation for this account
         Type: String
-        Default: 10.192.11.0/24
-
-
-    EC2KeyName:
-        Description: The name of the EC2 key pair
+    KeyName:
+        Default: bootstrap
+        Description: Name of an existing EC2 KeyPair for SSH access
+        Type: AWS::EC2::KeyPair::KeyName
+    Stage:
+        Description: Stage applied as a tag
         Type: String
-
-    HttpProxy:
-        Description: The Application Load Balancer listener to register with
+        Default: PROD
+        AllowedValues:
+        - PROD
+        - CODE
+        - INFRA
+        ConstraintDescription: must be a valid stage eg. PROD, CODE, INFRA
+    NginxUsername:
+        Description: Username to access the Kibana interface and the Elasticsearch API
         Type: String
-
-    HttpsProxy:
-        Description: The Application Load Balancer listener to register with
+        MinLength: '1'
+    NginxPassword:
+        Description: Password to access the Kibana interface and the Elasticsearch API
         Type: String
-
-    NoProxy:
-        Description: The Application Load Balancer listener to register with
+        NoEcho: 'true'
+    ProxyServerEndpoint:
+        Description: The proxy server url
         Type: String
-
-    GitHubUser:
+    ProxyPort:
+        Description: Proxy server service port
         Type: String
-        Description: Your username on GitHub.
-
-    GitHubRepo:
+    ProxyExcludeList:
+        Description: Proxy exclude list
         Type: String
-        Default: ecs-demo-php-simple-app
-        Description: The repo name of the sample service.
-
-    GitHubBranch:
+    MonitorStack:
+        Description: >-
+          Push logs from Elasticsearch, Nginx, KCL and CloudFormation to CloudWatch
+          Logs
         Type: String
-        Default: master
-        Description: The branch of the repo to continuously deploy.
+        Default: 'true'
+        AllowedValues:
+          - 'true'
+          - 'false'
+    ElkCapacity:
+        Description: Autoscale Size
+        Type: Number
+        Default: '1'
+        MinValue: 1
+        MaxValue: 12
 
-    GitHubToken:
+    KibanaCapacity:
+        Description: Autoscale Size
+        Type: Number
+        Default: '1'
+        MinValue: 1
+        MaxValue: 12
+
+    LogstashCapacity:
+        Description: Autoscale Size
+        Type: Number
+        Default: '1'
+        MinValue: 1
+        MaxValue: 12
+    InstanceType:
+        Description: EC2 instance type for the Elasticsearch nodes
         Type: String
-        Description: >
-            Token for the user specified above. (https://github.com/settings/tokens)
+        Default: t2.medium
+        AllowedValues:
+        - t2.micro
+        - t2.small
+        - t2.medium
+        - t2.large
+        - m4.large
+        - m4.xlarge
+        - m4.2xlarge
+        - m4.4xlarge
+        - m4.10clarge
+        - m3.medium
+        - m3.large
+        - m3.xlarge
+        - m3.2xlarge
+        - c3.large
+        - c3.xlarge
+        - c3.2xlarge
+        - c3.4xlarge
+        - c3.8xlarge
+        - c4.large
+        - c4.xlarge
+        - c4.2xlarge
+        - c4.4xlarge
+        - c4.8xlarge
+        - r3.large
+        - r3.xlarge
+        - r3.2xlarge
+        - r3.4xlarge
+        - r3.8xlarge
+        - i2.xlarge
+        - i2.2xlarge
+        - i2.4xlarge
+        - i2.8xlarge
+        - d2.xlarge
+        - d2.2xlarge
+        - d2.4xlarge
+        - d2.8xlarge
+        - hi1.4xlarge
+        - hs1.8xlarge
+        - cr1.8xlarge
+        - cc2.8xlarge
 
-Metadata:
-  AWS::CloudFormation::Interface:
-    ParameterLabels:
-      GitHubUser:
-        default: "User"
-      GitHubRepo:
-        default: "Repo"
-      GitHubBranch:
-        default: "Branch"
-      GitHubToken:
-        default: "Personal Access Token"
-    ParameterGroups:
-      - Label:
-          default: GitHub Configuration
-        Parameters:
-          - GitHubRepo
-          - GitHubBranch
-          - GitHubUser
-          - GitHubToken
+    LogstashInstanceType:
+        Description: EC2 instance type for the Elasticsearch nodes
+        Type: String
+        Default: t2.medium
+        AllowedValues:
+        - t2.micro
+        - t2.small
+        - t2.medium
+        - t2.large
+        - m4.large
+        - m4.xlarge
+        - m4.2xlarge
+        - m4.4xlarge
+        - m4.10clarge
+        - m3.medium
+        - m3.large
+        - m3.xlarge
+        - m3.2xlarge
+        - c3.large
+        - c3.xlarge
+        - c3.2xlarge
+        - c3.4xlarge
+        - c3.8xlarge
+        - c4.large
+        - c4.xlarge
+        - c4.2xlarge
+        - c4.4xlarge
+        - c4.8xlarge
+        - r3.large
+        - r3.xlarge
+        - r3.2xlarge
+        - r3.4xlarge
+        - r3.8xlarge
+        - i2.xlarge
+        - i2.2xlarge
+        - i2.4xlarge
+        - i2.8xlarge
+        - d2.xlarge
+        - d2.2xlarge
+        - d2.4xlarge
+        - d2.8xlarge
+        - hi1.4xlarge
+        - hs1.8xlarge
+        - cr1.8xlarge
+        - cc2.8xlarge
+
+    KibanaInstanceType:
+        Description: EC2 instance type for the Elasticsearch nodes
+        Type: String
+        Default: t2.medium
+        AllowedValues:
+        - t2.micro
+        - t2.small
+        - t2.medium
+        - t2.large
+        - m4.large
+        - m4.xlarge
+        - m4.2xlarge
+        - m4.4xlarge
+        - m4.10clarge
+        - m3.medium
+        - m3.large
+        - m3.xlarge
+        - m3.2xlarge
+        - c3.large
+        - c3.xlarge
+        - c3.2xlarge
+        - c3.4xlarge
+        - c3.8xlarge
+        - c4.large
+        - c4.xlarge
+        - c4.2xlarge
+        - c4.4xlarge
+        - c4.8xlarge
+        - r3.large
+        - r3.xlarge
+        - r3.2xlarge
+        - r3.4xlarge
+        - r3.8xlarge
+        - i2.xlarge
+        - i2.2xlarge
+        - i2.4xlarge
+        - i2.8xlarge
+        - d2.xlarge
+        - d2.2xlarge
+        - d2.4xlarge
+        - d2.8xlarge
+        - hi1.4xlarge
+        - hs1.8xlarge
+        - cr1.8xlarge
+        - cc2.8xlarge
+
+    VpcId:
+        Description: ID of the VPC onto which to launch the application eg. vpc-1234abcd
+        Type: AWS::EC2::VPC::Id
+    PublicVpcSubnets:
+        Description: Subnets to use in VPC for public ELB eg. subnet-abcd1234
+        Type: String
+    PrivateVpcSubnets:
+        Description: Subnets to use in VPC for instances eg. subnet-abcd1234
+        Type: String
+    VpcIpRangeCidr:
+        Description: VPC IP range eg. 10.0.0.0/8
+        Type: String
+        Default: 0.0.0.0/0
+    AllowedSshCidr:
+        Description: IP range to allow SSH access from eg. 1.2.3.4/21
+        Type: String
+        Default: 0.0.0.0/0
+    AllowedHttpCidr:
+        Description: IP range to allow HTTP access from eg. 1.2.3.4/21
+        Type: String
+        Default: 0.0.0.0/0
+    HostedZoneName:
+        Description: Route53 Hosted Zone in which kibana aliases will be created (without
+          the trailing dot). Leave blank for no ALIAS.
+        Type: String
+        AllowedPattern: "^(.*[^.]|)$"
+    EBSVolumeSize:
+        Description: EBS storage to be attached to each instance (in GB). Set to zero
+          for no attached EBS volume (the on-instance storage will be used instead).
+        Type: Number
+        Default: 0
+        MaxValue: 1000
+        MinValue: 0
+    LogstashEBSVolumeSize:
+        Description: EBS storage to be attached to each instance (in GB). Set to zero
+          for no attached EBS volume (the on-instance storage will be used instead).
+        Type: Number
+        Default: 0
+        MaxValue: 1000
+        MinValue: 0
+
+    KibanaEBSVolumeSize:
+        Description: EBS storage to be attached to each instance (in GB). Set to zero
+          for no attached EBS volume (the on-instance storage will be used instead).
+        Type: Number
+        Default: 0
+        MaxValue: 1000
+        MinValue: 0
+
+    SnapshotRepository:
+        Description: S3 bucket name for elasticsearch snapshots repository
+        Type: String
+    IndexKeepDays:
+      Description: Keep elasticsearch indices for x number of days
+      Type: Number
+      Default: '8'
+    PublicLoadBalancerSSLCertificateARN:
+        Description: ARN of the SSL certificate applied to the public load balancer
+        Type: String
+        Default: ''
 
 Resources:
 
-    SecurityGroups:
+    ProfileAndLogs:
         Type: AWS::CloudFormation::Stack
         Properties:
-            TemplateURL: https://s3-ap-southeast-2.amazonaws.com/build-devisland-artifact-continuous-deployment-ap-southeast-2/infrastructure/security-groups.yaml
+            TemplateURL: https://s3-ap-southeast-2.amazonaws.com/optus-devisland-aem/elk/cfn/instanceprofile-policy-logs.yaml
             Parameters: 
-                EnvironmentName: !Ref AWS::StackName
-                VPC: !Ref VPCID
+                SnapshotRepository: !Ref SnapshotRepository
+                MonitorStack: !Ref MonitorStack
 
-    ALB:
+
+    ElasticSearch:
         Type: AWS::CloudFormation::Stack
         Properties:
-            TemplateURL: https://s3-ap-southeast-2.amazonaws.com/build-devisland-artifact-continuous-deployment-ap-southeast-2/infrastructure/load-balancers.yaml
+            TemplateURL: https://s3-ap-southeast-2.amazonaws.com/optus-devisland-aem/elk/cfn/elasticsearch.yaml
             Parameters:
-                EnvironmentName: !Ref AWS::StackName
-                VPC: !Ref VPCID
-                SubnetPublicA: !Ref SubnetPublicA
-                SubnetPublicB: !Ref SubnetPublicB
-                SecurityGroup: !GetAtt SecurityGroups.Outputs.LoadBalancerSecurityGroup
+                Stack: !Ref Stack
+                Account: !Ref Account
+                Organisation: !Ref Organisation
+                KeyName: !Ref KeyName
+                Stage: !Ref Stage
+                ProxyServerEndpoint: !Ref ProxyServerEndpoint
+                ProxyPort: !Ref ProxyPort
+                ProxyExcludeList: !Ref ProxyExcludeList
+                MonitorStack: !Ref MonitorStack
+                ElkCapacity: !Ref ElkCapacity
+                InstanceType: !Ref InstanceType
+                VpcId: !Ref VpcId
+                PublicVpcSubnets: !Ref PublicVpcSubnets
+                PrivateVpcSubnets: !Ref PrivateVpcSubnets
+                VpcIpRangeCidr: !Ref VpcIpRangeCidr
+                AllowedSshCidr: !Ref AllowedSshCidr
+                AllowedHttpCidr: !Ref AllowedHttpCidr
+                HostedZoneName: !Ref HostedZoneName
+                EBSVolumeSize: !Ref EBSVolumeSize
+                SnapshotRepository: !Ref SnapshotRepository
+                IndexKeepDays: !Ref IndexKeepDays
+                PublicLoadBalancerSSLCertificateARN: !Ref PublicLoadBalancerSSLCertificateARN
+                InstanceProfile: !GetAtt ProfileAndLogs.Outputs.InstanceProfile
 
-    ECS:
+    Kibana:
         Type: AWS::CloudFormation::Stack
         Properties:
-            TemplateURL: https://s3-ap-southeast-2.amazonaws.com/build-devisland-artifact-continuous-deployment-ap-southeast-2/infrastructure/ecs-cluster.yaml
+            TemplateURL: https://s3-ap-southeast-2.amazonaws.com/optus-devisland-aem/elk/cfn/kibana.yaml
             Parameters:
-                EnvironmentName: !Ref AWS::StackName
-                InstanceType: t2.small
-                ClusterSize: 1
-                VPC: !Ref VPCID
-                SecurityGroup: !GetAtt SecurityGroups.Outputs.ECSHostSecurityGroup
-                SubnetPublicA: !Ref SubnetPublicA
-                SubnetPublicB: !Ref SubnetPublicB
-                EC2KeyName: !Ref EC2KeyName
+                Stack: !Ref Stack
+                Account: !Ref Account
+                Organisation: !Ref Organisation
+                KeyName: !Ref KeyName
+                Stage: !Ref Stage
+                Stage: !Ref Stage
+                ProxyServerEndpoint: !Ref ProxyServerEndpoint
+                ProxyPort: !Ref ProxyPort
+                ProxyExcludeList: !Ref ProxyExcludeList
+                KibanaCapacity: !Ref KibanaCapacity
+                KibanaInstanceType: !Ref KibanaInstanceType
+                VpcId: !Ref VpcId
+                PublicVpcSubnets: !Ref PublicVpcSubnets
+                PrivateVpcSubnets: !Ref PrivateVpcSubnets
+                VpcIpRangeCidr: !Ref VpcIpRangeCidr
+                AllowedSshCidr: !Ref AllowedSshCidr
+                AllowedHttpCidr: !Ref AllowedHttpCidr
+                HostedZoneName: !Ref HostedZoneName
+                KibanaEBSVolumeSize: !Ref KibanaEBSVolumeSize
+                InstanceProfile: !GetAtt ProfileAndLogs.Outputs.InstanceProfile
+                ElasticEndpoint: !GetAtt ElasticSearch.Outputs.ElasticEndpoint
 
 
-    ProductService:
-            Type: AWS::CloudFormation::Stack
-            Properties:
-                TemplateURL: https://s3-ap-southeast-2.amazonaws.com/build-devisland-artifact-files/api/services/product-service/service.yaml
-                Parameters:
-                    VPC: !Ref VPCID
-                    Cluster: !GetAtt ECS.Outputs.Cluster
-                    DesiredCount: 2
-                    Listener: !GetAtt ALB.Outputs.Listener
-                    Path: /products
+    Logstash:
+        Type: AWS::CloudFormation::Stack
+        Properties:
+            TemplateURL: https://s3-ap-southeast-2.amazonaws.com/optus-devisland-aem/elk/cfn/logstash.yaml
+            Parameters:
+                Stack: !Ref Stack
+                Account: !Ref Account
+                Organisation: !Ref Organisation
+                KeyName: !Ref KeyName
+                Stage: !Ref Stage
+                ProxyServerEndpoint: !Ref ProxyServerEndpoint
+                ProxyPort: !Ref ProxyPort
+                ProxyExcludeList: !Ref ProxyExcludeList
+                LogstashCapacity: !Ref ElkCapacity
+                LogstashInstanceType: !Ref LogstashInstanceType
+                VpcId: !Ref VpcId
+                PublicVpcSubnets: !Ref PublicVpcSubnets
+                PrivateVpcSubnets: !Ref PrivateVpcSubnets
+                VpcIpRangeCidr: !Ref VpcIpRangeCidr
+                AllowedSshCidr: !Ref AllowedSshCidr
+                AllowedHttpCidr: !Ref AllowedHttpCidr
+                HostedZoneName: !Ref HostedZoneName
+                LogstashEBSVolumeSize: !Ref EBSVolumeSize
+                InstanceProfile: !GetAtt ProfileAndLogs.Outputs.InstanceProfile
+                ElasticEndpoint: !GetAtt ElasticSearch.Outputs.ElasticEndpoint
 
 
 
 Outputs:
 
-    ProductServiceUrl: 
-        Description: The URL endpoint for the product service
-        Value: !Join [ "/", [ !GetAtt ALB.Outputs.LoadBalancerUrl, "cxf" ]]
+    KibanaUrl:
+        Description: The URL endpoint for the kibana Service
+        Value: !GetAtt Kibana.Outputs.KibanaURL
 
-    WebsiteServiceUrl: 
-        Description: The URL endpoint for the website service
-        Value: !Join ["", [ !GetAtt ALB.Outputs.LoadBalancerUrl, "/" ]]
+    LogstashUrl:
+        Description: The URL endpoint for the Logstash
+        Value: !GetAtt Logstash.Outputs.LogstashEndpoint

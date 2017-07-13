@@ -683,7 +683,6 @@ Resources:
 
             aws s3 cp s3://{Organisation}-{Account}-elk/nginx/nginx.conf /etc/nginx/nginx.conf
 
-
             # Start services
 
             wget -O /etc/systemd/system/kibana.service https://raw.githubusercontent.com/guardian/elk-stack/master/config/systemd-kibana.service
@@ -696,7 +695,7 @@ Resources:
 
             service  elasticsearch start
             service  kibana start
-
+            service nginx start
 
 
             while ! nc -z localhost 9200; do sleep 5; done; echo Elasticsearch is up!
