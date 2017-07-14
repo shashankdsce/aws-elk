@@ -1,0 +1,33 @@
+filebeat:
+  config_dir: /opt/filebeat-5.5.0/conf.d
+
+#----------------------------- Logstash output --------------------------------
+output.logstash:
+  # The Logstash hosts
+  hosts: ["internal-elk-2-log-logstash-xx4vkgnfiny-700942259.ap-southeast-2.elb.amazonaws.com:5000"]
+
+  # Optional SSL. By default is off.
+  # List of root certificates for HTTPS server verifications
+  #ssl.certificate_authorities: ["/etc/pki/root/ca.pem"]
+
+  # Certificate for SSL client authentication
+  #ssl.certificate: "/etc/pki/client/cert.pem"
+
+  # Client Certificate Key
+  #ssl.key: "/etc/pki/client/cert.key"
+
+#================================ Logging =====================================
+
+# Sets log level. The default log level is info.
+# Available log levels are: critical, error, warning, info, debug
+logging.level: debug
+logging.to_files: true
+logging.files:
+  path: /var/log/mybeat
+  name: mybeat.log
+  keepfiles: 7
+
+# At debug level, you can selectively enable logging only for some components.
+# To enable all selectors use ["*"]. Examples of other selectors are "beat",
+# "publish", "service".
+logging.selectors: ["*"]
