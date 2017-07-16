@@ -399,9 +399,9 @@ Resources:
           - |
             #!/bin/bash -ev
             cat >/etc/profile.d/proxy.sh <<EOL
-            export http_proxy=http://${ProxyServerEndpoint}:${ProxyPort};
-            export https_proxy=http://${ProxyServerEndpoint}:${ProxyPort};
-            export no_proxy=${ProxyExcludeList};
+            export http_proxy=http://${ProxyServerEndpoint}:${ProxyPort}
+            export https_proxy=http://${ProxyServerEndpoint}:${ProxyPort}
+            export no_proxy=${ProxyExcludeList}
             export AWS_ORG=${Organisation}
             export AWS_ACCOUNT_NAME=${Account}
             export AWS_ACCOUNT_ID=${AWS::AccountId}

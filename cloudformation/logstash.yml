@@ -400,9 +400,12 @@ Resources:
                 - |
                   #!/bin/bash -ev
                   cat >/etc/profile.d/proxy.sh <<EOL
-                  export http_proxy=http://${ProxyServerEndpoint}:${ProxyPort};
-                  export https_proxy=http://${ProxyServerEndpoint}:${ProxyPort};
-                  export no_proxy=${ProxyExcludeList};
+                  export http_proxy=http://${ProxyServerEndpoint}:${ProxyPort}
+                  export https_proxy=http://${ProxyServerEndpoint}:${ProxyPort}
+                  export no_proxy=${ProxyExcludeList}
+                  export HTTP_PROXY=http://${ProxyServerEndpoint}:${ProxyPort}
+                  export HTTPS_PROXY=http://${ProxyServerEndpoint}:${ProxyPort}
+                  export NO_PROXY =${ProxyExcludeList}
                   export AWS_ORG=${Organisation}
                   export AWS_ACCOUNT_NAME=${Account}
                   export AWS_ACCOUNT_ID=${AWS::AccountId}
@@ -444,6 +447,8 @@ Resources:
                   # Mount Volume
                   ${MountVolume}
                   chown -R logstash: /opt/logstash
+
+                  /usr/share/logstash/bin/logstash-plugin install logstash-input-cloudwatch --batch
 
                   # Setup free disk space monitoring
                   curl http://aws-cloudwatch.s3.amazonaws.com/downloads/CloudWatchMonitoringScripts-1.2.1.zip -O

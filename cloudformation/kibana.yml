@@ -405,9 +405,9 @@ Resources:
             - |
               #!/bin/bash -ev
               cat >/etc/profile.d/proxy.sh <<EOL
-              export http_proxy=http://${ProxyServerEndpoint}:${ProxyPort};
-              export https_proxy=http://${ProxyServerEndpoint}:${ProxyPort};
-              export no_proxy=${ProxyExcludeList};
+              export http_proxy=http://${ProxyServerEndpoint}:${ProxyPort}
+              export https_proxy=http://${ProxyServerEndpoint}:${ProxyPort}
+              export no_proxy=${ProxyExcludeList}
               export AWS_ORG=${Organisation}
               export AWS_ACCOUNT_NAME=${Account}
               export AWS_ACCOUNT_ID=${AWS::AccountId}
@@ -415,6 +415,7 @@ Resources:
               export AWS_STACK_ID=${AWS::StackId}
               export AWS_REGION=${AWS::Region}
               export AWS_VPC_ID=${VpcId}
+              export PATH=$PATH:/usr/share/kibana/node/bin
               EOL
 
               chmod 644 /etc/profile.d/proxy.sh
@@ -474,6 +475,10 @@ Resources:
               chown -R kibana: /usr/share/kibana
 
               aws s3 cp s3://${Organisation}-${Account}-aem/elk/config/nginx/nginx-kibana.conf /etc/nginx/nginx.conf
+
+              #Setup NPM Proxy
+              /usr/share/kibana/node/bin/npm config set proxy http://${ProxyServerEndpoint}:${ProxyPort}
+              [root@ip-172-16-145-241 bin]# /usr/share/kibana/node/bin/npm config set https-proxy http://${ProxyServerEndpoint}:${ProxyPort}
 
               # Start services
               aws s3 cp s3://${Organisation}-${Account}-aem/elk/config/kibana/systemd-kibana.service /etc/systemd/system/kibana.service

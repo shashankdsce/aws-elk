@@ -1,6 +1,9 @@
 filebeat:
   config_dir: /opt/filebeat-5.5.0/conf.d
 
+fields:
+  env: test-6-lhs
+
 #----------------------------- Logstash output --------------------------------
 output.logstash:
   # The Logstash hosts
