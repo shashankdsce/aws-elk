@@ -465,6 +465,11 @@ Resources:
                     -e 's,@@ElASTICHOST,${ElasticEndpoint},g' \
                     /etc/logstash/conf.d/99_output.conf
 
+                  sed -i \
+                    -e 's,@@ProxyServerEndpoint,${ProxyServerEndpoint},g' \
+                    -e 's,@@ProxyPort,${ProxyPort},g' \
+                    /etc/logstash/conf.d/00_output.conf
+
                   # Start services
                   /usr/share/logstash/bin/system-install
                   initctl start logstash
