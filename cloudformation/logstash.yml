@@ -167,11 +167,6 @@ Conditions:
     UseLogstashEBS: !Not [!Equals [!Ref LogstashEBSVolumeSize,  '0']]
 
 Mappings:
-    Constants:
-        S3DownloadPath:
-            Value: aws-cloudwatch/downloads/cloudwatch-logs-subscription-consumer
-        S3DownloadFile:
-            Value: cloudwatch-logs-subscription-consumer-1.2.0
     RegionMap:
         us-east-1:
           ImageId: ami-6edd3078
@@ -468,6 +463,7 @@ Resources:
                   sed -i \
                     -e 's,@@ProxyServerEndpoint,${ProxyServerEndpoint},g' \
                     -e 's,@@ProxyPort,${ProxyPort},g' \
+                    -e 's,@@Region,${AWS::Region},g' \
                     /etc/logstash/conf.d/00_output.conf
 
                   # Start services

@@ -302,8 +302,8 @@ Resources:
     ProfileAndLogs:
         Type: AWS::CloudFormation::Stack
         Properties:
-            TemplateURL: https://s3-ap-southeast-2.amazonaws.com/optus-devisland-aem/elk/cfn/instanceprofile-policy-logs.yml
-            Parameters: 
+            TemplateURL: !Join [ '', [ 'https://s3-',!Ref "AWS::Region",'.amazonaws.com/', !Ref Organisation,'-',!Ref Account,'-aem','elk/cfn/', 'instanceprofile-policy-logs.yml']]
+            Parameters:
                 SnapshotRepository: !Ref SnapshotRepository
                 MonitorStack: !Ref MonitorStack
 
@@ -311,7 +311,7 @@ Resources:
     ElasticSearch:
         Type: AWS::CloudFormation::Stack
         Properties:
-            TemplateURL: https://s3-ap-southeast-2.amazonaws.com/optus-devisland-aem/elk/cfn/elasticsearch.yml
+            TemplateURL: !Join [ '', [ 'https://s3-',!Ref "AWS::Region",'.amazonaws.com/', !Ref Organisation,'-',!Ref Account,'-aem','elk/cfn/', 'elasticsearch.yml']]
             Parameters:
                 Stack: !Ref Stack
                 NodeMaster: !Ref NodeMaster
@@ -342,7 +342,8 @@ Resources:
     Kibana:
         Type: AWS::CloudFormation::Stack
         Properties:
-            TemplateURL: https://s3-ap-southeast-2.amazonaws.com/optus-devisland-aem/elk/cfn/kibana.yml
+            TemplateURL: !Join [ '', [ 'https://s3-',!Ref "AWS::Region",'.amazonaws.com/', !Ref Organisation,'-',!Ref Account,'-aem', 'elk/cfn/', 'kibana.yml']]
+
             Parameters:
                 Stack: !Ref KibanaStack
                 Account: !Ref Account
@@ -372,7 +373,7 @@ Resources:
     Logstash:
         Type: AWS::CloudFormation::Stack
         Properties:
-            TemplateURL: https://s3-ap-southeast-2.amazonaws.com/optus-devisland-aem/elk/cfn/logstash.yml
+            TemplateURL: !Join [ '', [ 'https://s3-',!Ref "AWS::Region",'.amazonaws.com/', !Ref Organisation,'-',!Ref Account,'-aem','elk/cfn/', 'logstash.yml']]
             Parameters:
                 Stack: !Ref LogstashStack
                 Account: !Ref Account

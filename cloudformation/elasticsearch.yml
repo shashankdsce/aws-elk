@@ -551,7 +551,7 @@ Resources:
               - !Sub |
                   mkdir -p /opt/elasticsearch
                   #mount /dev/xvda1 /data
-            ElkHost: !Join [ '', [ 'http', !GetAtt ElkInternalLoadBalancer.DNSName, '/elasticsearch' ]]
+            ElkHost: !Join [ '', [ 'http://', !GetAtt ElkInternalLoadBalancer.DNSName, '/elasticsearch' ]]
             SetupS3Snapshot: !If
               - HasS3
               - !Sub |
@@ -561,7 +561,7 @@ Resources:
                              "type": "s3",
                               "settings": {
                                 "bucket": "${SnapshotRepository}",
-                                "region": "ap-southeast-2"
+                                "region": "${AWS::Region}"
                               }
                       }
                   EOF
